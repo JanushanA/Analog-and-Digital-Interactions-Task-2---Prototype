@@ -423,6 +423,7 @@ private:
   unsigned long previousMicros = 0;
 
   // Direct register writes replace the larger MPU6050 library and reduce Arduino flash usage.
+  // Finds part,then register,then assigns value
   bool writeRegister(byte reg, byte value){
     Wire.beginTransmission(address);
     Wire.write(reg);
@@ -442,8 +443,10 @@ private:
     int16_t rawTemp = ((int16_t)Wire.read() << 8) | Wire.read();
 
     // X and Y gyro bytes are discarded because only Z-axis yaw is required.
+    //6 bytes total; it discards the first 2 X and the 2 Y bytes.
     Wire.read(); Wire.read();
     Wire.read(); Wire.read();
+   //combines the 2 8-bit Z bytes into a 16-bit signed number by shifting the high byte by 8.
     int16_t rawGyroZ = ((int16_t)Wire.read() << 8) | Wire.read();
 
     // At the configured +/-500 deg/s range the gyro sensitivity is 65.5 LSB per deg/s.
@@ -469,10 +472,13 @@ public:
       return;
     }
 
-    // These registers wake the MPU, enable digital filtering and select the +/-500 deg/s gyro range.
-    writeRegister(0x6B, 0x00);
-    writeRegister(0x1A, 0x03);
-    writeRegister(0x1B, 0x08);
+    // These registers from the datasheet wake the MPU, enable digital filtering and select the +/-500 deg/s gyro range.
+    //0x6B = PWR_MGMT_1(Bit 6), 0x00 = 00000000
+    writeRegister(0x6B, 0x00);// wakes up mpu
+    //0x1A = DLPF_CFG(bottom 3 bits), 0x03 = 00000011
+    writeRegister(0x1A, 0x03); //digital low pass filter set to setting 3.
+    //0x1B = FS_SEL(bit4-3), 0x08 = 00001000;
+    writeRegister(0x1B, 0x08); //gyroscope range set to setting 1, +_500 degrees/s
     delay(100);
     working = true;
     pass(F("MPU6050 detected."));
@@ -503,7 +509,7 @@ public:
     Serial.println(F(" deg/s"));
     headingDegrees = 0;
     previousMicros = micros();
-    pass(F("Relative heading zeroed."));
+    pass(F("Relative heading zeroed. Drift reduced"));
   }
 
   void update(){
@@ -521,6 +527,7 @@ public:
 
     // A small angular-velocity deadband reduces heading drift caused by stationary gyro noise.
     if (gyroZ > -0.5 && gyroZ < 0.5) gyroZ = 0;
+    //angle = angular velocity * time;
     headingDegrees += gyroZ * dt * HEADING_DIRECTION;
 
     // Wrapping prevents heading from growing outside the conventional 0-359 degree range.
@@ -557,6 +564,7 @@ private:
   unsigned long startSeconds = 0;
 
   // DS3231 time registers use Binary-Coded Decimal, so each nibble stores one decimal digit.
+  // top 4 bits is upper nibble, bottom 4 bits is lower nibble.
   byte bcdToDecimal(byte value) const { return (value >> 4) * 10 + (value & 0x0F); }
 
 public:
@@ -691,7 +699,7 @@ public:
   void resetTiming(unsigned long now){ phaseStart = now; }
 
   void update(){
-    // The phase state machine sequences stop, forward, stop and reverse without using blocking delays.
+    // The phase state machine sequences stop, forward, stop and reverse without using blocking delays(finite-state machine).
     unsigned long now = millis();
     unsigned long elapsed = now - phaseStart;
     if (phase == 0 && elapsed >= 3000) nextPhase(1, speedSetting, F("[MOTOR] LEFT -> FORWARD"), now);
